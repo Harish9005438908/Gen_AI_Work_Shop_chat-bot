@@ -1,140 +1,166 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Mini Gemini Chatbot</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-  <style>
-    /* tiny extras just for the mode bar */
-    .bar {
-      display: grid;
-      grid-template-columns: 1fr auto;
-      gap: 10px;
-      align-items: center;
-      margin: 8px 0 14px;
-    }
-    .mode {
-      display: inline-flex; gap: 8px; align-items: center;
-      background: rgba(255,255,255,0.06);
-      border: 1px solid rgba(255,255,255,0.12);
-      padding: 8px 10px; border-radius: 10px; color: #e5e7eb;
-    }
-    .mode label { font-weight: 600; }
-    .mode select {
-      background: transparent; color: #e5e7eb; border: none; outline: none;
-    }
-  </style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gemini Chatbot (RAG Enabled)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .chat-container {
+            max-height: 70vh;
+            overflow-y: auto;
+        }
+        .user-message {
+            background-color: #3b82f6;
+            color: white;
+            align-self: flex-end;
+            border-radius: 15px 15px 0 15px;
+        }
+        .bot-message {
+            background-color: #e5e7eb;
+            color: #1f2937;
+            align-self: flex-start;
+            border-radius: 15px 15px 15px 0;
+        }
+    </style>
 </head>
-<body>
-  <div class="app">
-    <header>
-      <h1>Mini Gemini Chatbot</h1>
-      <p class="sub">Frontend: HTML/CSS • Backend: Flask • Model: Google Gemini</p>
-    </header>
+<body class="bg-gray-100 min-h-screen flex items-center justify-center p-4" style="font-family: 'Inter', sans-serif;">
 
-    <!-- Mode / persona selector -->
-    <div class="bar">
-      <div class="mode">
-        <!-- Accessible label associated to the select -->
-        <label for="mode">Mode:</label>
-        <select id="mode" name="mode" title="Response behavior mode" aria-describedby="mode-help">
-          <option value="default" selected>Default (concise)</option>
-          <option value="teacher">Teacher (step-by-step)</option>
-          <option value="support">Support (IT helpdesk)</option>
-        </select>
-        <span id="mode-help" class="visually-hidden">Choose how the assistant should respond.</span>
-      </div>
+    <div id="chat-app" class="w-full max-w-lg bg-white rounded-xl shadow-2xl overflow-hidden">
+        
+        <header class="bg-indigo-600 p-4 text-white text-center">
+            <h1 class="text-xl font-bold">Gemini RAG Chatbot</h1>
+            <p class="text-sm opacity-80">Ask anything! Grounded with Google Search.</p>
+        </header>
+
+        <div id="chat-messages" class="chat-container p-4 flex flex-col space-y-4">
+            <!-- Messages will appear here -->
+        </div>
+
+        <div id="status-area" class="text-xs p-2 text-center text-red-500 hidden"></div>
+
+        <div class="p-4 border-t border-gray-200">
+            <div class="flex space-x-2">
+                <input type="text" id="user-input" placeholder="Type your message..."
+                       class="flex-grow p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                       onkeypress="if(event.key === 'Enter') sendMessage()">
+                <button onclick="sendMessage()" id="send-button"
+                        class="px-4 py-3 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition duration-150">
+                    Send
+                </button>
+            </div>
+        </div>
     </div>
 
-    <main id="chat" aria-live="polite">
-      <!-- Messages will be appended here -->
-    </main>
+    <script>
+        const chatMessages = document.getElementById('chat-messages');
+        const userInput = document.getElementById('user-input');
+        const sendButton = document.getElementById('send-button');
+        const statusArea = document.getElementById('status-area');
+        let history = [];
 
-    <form id="composer">
-      <label for="message" class="visually-hidden">Message</label>
-      <input id="message" type="text" placeholder="Type your message..." autocomplete="off" required />
-      <button type="submit" id="send">Send</button>
-    </form>
-  </div>
+        function appendMessage(role, text, sources = []) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = 'flex';
+            
+            const contentDiv = document.createElement('div');
+            contentDiv.className = 'max-w-[80%] p-3 shadow-md';
+            
+            if (role === 'user') {
+                contentDiv.classList.add('user-message');
+                messageDiv.classList.add('justify-end');
+            } else {
+                contentDiv.classList.add('bot-message');
+                messageDiv.classList.add('justify-start');
+            }
+            
+            // Format sources if present
+            let sourceHtml = '';
+            if (sources.length > 0) {
+                const uniqueSources = Array.from(new Set(sources.map(s => s.uri)))
+                    .map(uri => sources.find(s => s.uri === uri));
 
-  <script>
-    const chat = document.getElementById('chat');
-    const form = document.getElementById('composer');
-    const input = document.getElementById('message');
-    const modeSel = document.getElementById('mode');
+                sourceHtml = '<div class="text-xs mt-2 pt-2 border-t border-gray-300">';
+                sourceHtml += '<p class="font-semibold mb-1">Sources:</p>';
+                sourceHtml += '<ul class="list-none space-y-1">';
+                uniqueSources.forEach((source, index) => {
+                    sourceHtml += `<li class="truncate"><a href="${source.uri}" target="_blank" class="text-indigo-600 hover:underline">`;
+                    sourceHtml += `${index + 1}. ${source.title || source.uri}</a></li>`;
+                });
+                sourceHtml += '</ul></div>';
+            }
 
-    // Keep a small client-side history for context
-    const history = []; // [{role:'user'|'model', text:'...'}]
-
-    function addMsg(role, text) {
-      const wrap = document.createElement('div');
-      wrap.className = 'msg ' + role; // e.g., "msg user", "msg model", "msg model pending"
-      const bubble = document.createElement('div');
-      bubble.className = 'bubble';
-      bubble.innerHTML = (text ?? '').toString().replace(/\n/g, '<br>');
-      wrap.appendChild(bubble);
-      chat.appendChild(wrap);
-      chat.scrollTop = chat.scrollHeight;
-      return wrap;
-    }
-
-    form.addEventListener('submit', async (e) => {
-      e.preventDefault();
-      const text = input.value.trim();
-      if (!text) return;
-
-      input.value = '';
-      addMsg('user', text);
-      history.push({ role: 'user', text });
-
-      // placeholder bot bubble
-      const pending = addMsg('model pending', '…');
-
-      try {
-        const res = await fetch('/chat', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            message: text,
-            history,
-            mode: modeSel.value // <- send selected prompt profile
-          })
-        });
-
-        const data = await res.json();
-
-        // update the pending bubble
-        pending.classList.remove('pending');
-        const bubble = pending.querySelector('.bubble');
-
-        if (data.error) {
-          bubble.textContent = 'Error: ' + data.error;
-          return;
+            contentDiv.innerHTML = `${text.replace(/\n/g, '<br>')} ${sourceHtml}`;
+            messageDiv.appendChild(contentDiv);
+            chatMessages.appendChild(messageDiv);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+        
+        function addSystemMessage(text, color = 'text-gray-500') {
+            const systemDiv = document.createElement('div');
+            systemDiv.className = `text-center text-xs ${color}`;
+            systemDiv.textContent = text;
+            chatMessages.appendChild(systemDiv);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
         }
 
-        const reply = data.reply || '(No response)';
-        bubble.innerHTML = reply.replace(/\n/g, '<br>');
-        history.push({ role: 'model', text: reply });
+        async function sendMessage() {
+            const message = userInput.value.trim();
+            if (!message) return;
 
-        chat.scrollTop = chat.scrollHeight;
-      } catch (err) {
-        pending.classList.remove('pending');
-        const bubble = pending.querySelector('.bubble');
-        bubble.textContent = 'Network error: ' + err;
-      }
-    });
-  </script>
+            appendMessage('user', message);
+            history.push({ role: 'user', text: message });
 
-  <!-- Visually hidden utility class for a11y -->
-  <style>
-    .visually-hidden {
-      position: absolute !important;
-      height: 1px; width: 1px;
-      overflow: hidden; clip: rect(1px, 1px, 1px, 1px);
-      white-space: nowrap; clip-path: inset(50%);
-      border: 0; padding: 0; margin: -1px;
-    }
-  </style>
+            userInput.value = '';
+            sendButton.disabled = true;
+            statusArea.textContent = '...Thinking (RAG Enabled)...';
+            statusArea.classList.remove('hidden');
+
+            try {
+                // Determine the base URL dynamically based on deployment
+                const baseURL = window.location.origin;
+                const endpointURL = `${baseURL}/chat`;
+                
+                // IMPORTANT: The network call is targeting the /chat endpoint
+                const response = await fetch(endpointURL, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ message: message, history: history, mode: 'default' }),
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    
+                    // Add model response to history
+                    history.push({ role: 'model', text: data.reply });
+                    
+                    // Display the response and any sources
+                    appendMessage('bot', data.reply, data.sources || []);
+
+                } else {
+                    const errorText = await response.text();
+                    statusArea.textContent = `Network error: ${response.status} - Could not get valid response.`;
+                    statusArea.classList.remove('hidden');
+                    // Try to parse the error body if it exists, though the current error suggests it's not JSON
+                    console.error('Server returned non-OK status:', response.status, errorText);
+                    addSystemMessage(`Error: Server returned status ${response.status}`, 'text-red-600');
+                }
+
+            } catch (error) {
+                console.error('Fetch error:', error);
+                statusArea.textContent = `Network error: SyntaxError: Unexpected token 'N', "Not Found..." is not valid JSON`;
+                statusArea.classList.remove('hidden');
+            } finally {
+                sendButton.disabled = false;
+                statusArea.classList.add('hidden');
+            }
+        }
+
+        // Initial welcome message
+        addSystemMessage("Welcome! This chatbot uses Google Search Grounding (RAG). Try asking for a current event.");
+    </script>
+
 </body>
 </html>
