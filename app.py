@@ -2,6 +2,7 @@ import os
 from flask import Flask, request, jsonify, render_template
 from flask_cors import CORS
 import google.genai as genai
+from google.genai import types
 
 # -----------------------------
 # 1) API KEY HANDLING
@@ -19,6 +20,7 @@ MODEL_NAME = "gemini-2.5-flash-lite"
 
 # Initialize the client. The key is passed directly to the constructor.
 client = genai.Client(api_key=GEMINI_API_KEY)
+GROUNDING_TOOL = types.Tool(google_search=types.GoogleSearch())
 
 # -----------------------------
 # 2) PROMPT PROFILES (behavior presets)
@@ -78,7 +80,7 @@ def chat():
     profile = PROFILES.get(mode, PROFILES["default"])
     system_instruction = profile["system"]
     
-    # 1. Extract individual parameters from the profile
+    # 1. Extract individual parameters for generation_config
     generation_config = {
         "temperature": profile["temperature"],
         "top_p": profile["top_p"],
@@ -90,12 +92,16 @@ def chat():
     contents = []
     for turn in history[-8:]:
         role = "user" if turn.get("role") == "user" else "model"
-        contents.append({"role": role, "parts": [{"text": turn.get("text", "")}]}) # Ensure part is a dictionary
+        # Ensure part is a dictionary with a 'text' key as expected by the new SDK
+        contents.append({"role": role, "parts": [{"text": turn.get("text", "")}]}) 
     contents.append({"role": "user", "parts": [{"text": user_message}]})
 
+    # Initialize sources list
+    sources = []
+    
     try:
-        # 2. Final Fix: Pass ALL configuration settings inside a single 'config' dictionary.
-        # This includes the system instruction and the generation configuration parameters.
+        # 2. Final Fix: Pass ALL configuration settings inside a single 'config' dictionary,
+        #    INCLUDING the RAG tool.
         resp = client.models.generate_content(
             model=MODEL_NAME, 
             contents=contents,
@@ -105,11 +111,27 @@ def chat():
                 "top_p": generation_config["top_p"],
                 "top_k": generation_config["top_k"],
                 "max_output_tokens": generation_config["max_output_tokens"],
+                "tools": [GROUNDING_TOOL] # <-- RAG/GROUNDING IS ADDED HERE
             }
         )
         
         text = resp.text or "(No response text)"
-        return jsonify({"reply": text, "mode": mode})
+        
+        # 3. Extract RAG/Grounding Sources (Citations)
+        if resp.candidates and resp.candidates[0].grounding_metadata:
+            metadata = resp.candidates[0].grounding_metadata
+            if metadata.grounding_chunks:
+                # The grounding chunks contain the URI (link) and title
+                for chunk in metadata.grounding_chunks:
+                    if chunk.web:
+                        sources.append({
+                            "title": chunk.web.title or "Source",
+                            "uri": chunk.web.uri
+                        })
+        
+        # 4. Update return value to include sources
+        return jsonify({"reply": text, "mode": mode, "sources": sources})
+    
     except Exception as e:
         error_message = str(e)
         if "API_KEY_INVALID" in error_message or "API key not valid" in error_message:
