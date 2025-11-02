@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mini Gemini Chatbot</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <style>
+    /* tiny extras just for the mode bar */
+    .bar {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 10px;
+      align-items: center;
+      margin: 8px 0 14px;
+    }
+    .mode {
+      display: inline-flex; gap: 8px; align-items: center;
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.12);
+      padding: 8px 10px; border-radius: 10px; color: #e5e7eb;
+    }
+    .mode label { font-weight: 600; }
+    .mode select {
+      background: transparent; color: #e5e7eb; border: none; outline: none;
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header>
+      <h1>Mini Gemini Chatbot</h1>
+      <p class="sub">Frontend: HTML/CSS • Backend: Flask • Model: Google Gemini</p>
+    </header>
+
+    <!-- Mode / persona selector -->
+    <div class="bar">
+      <div class="mode">
+        <!-- Accessible label associated to the select -->
+        <label for="mode">Mode:</label>
+        <select id="mode" name="mode" title="Response behavior mode" aria-describedby="mode-help">
+          <option value="default" selected>Default (concise)</option>
+          <option value="teacher">Teacher (step-by-step)</option>
+          <option value="support">Support (IT helpdesk)</option>
+        </select>
+        <span id="mode-help" class="visually-hidden">Choose how the assistant should respond.</span>
+      </div>
+    </div>
+
+    <main id="chat" aria-live="polite">
+      <!-- Messages will be appended here -->
+    </main>
+
+    <form id="composer">
+      <label for="message" class="visually-hidden">Message</label>
+      <input id="message" type="text" placeholder="Type your message..." autocomplete="off" required />
+      <button type="submit" id="send">Send</button>
+    </form>
+  </div>
+
+  <script>
+    const chat = document.getElementById('chat');
+    const form = document.getElementById('composer');
+    const input = document.getElementById('message');
+    const modeSel = document.getElementById('mode');
+
+    // Keep a small client-side history for context
+    const history = []; // [{role:'user'|'model', text:'...'}]
+
+    function addMsg(role, text) {
+      const wrap = document.createElement('div');
+      wrap.className = 'msg ' + role; // e.g., "msg user", "msg model", "msg model pending"
+      const bubble = document.createElement('div');
+      bubble.className = 'bubble';
+      bubble.innerHTML = (text ?? '').toString().replace(/\n/g, '<br>');
+      wrap.appendChild(bubble);
+      chat.appendChild(wrap);
+      chat.scrollTop = chat.scrollHeight;
+      return wrap;
+    }
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const text = input.value.trim();
+      if (!text) return;
+
+      input.value = '';
+      addMsg('user', text);
+      history.push({ role: 'user', text });
+
+      // placeholder bot bubble
+      const pending = addMsg('model pending', '…');
+
+      try {
+        const res = await fetch('/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            message: text,
+            history,
+            mode: modeSel.value // <- send selected prompt profile
+          })
+        });
+
+        const data = await res.json();
+
+        // update the pending bubble
+        pending.classList.remove('pending');
+        const bubble = pending.querySelector('.bubble');
+
+        if (data.error) {
+          bubble.textContent = 'Error: ' + data.error;
+          return;
+        }
+
+        const reply = data.reply || '(No response)';
+        bubble.innerHTML = reply.replace(/\n/g, '<br>');
+        history.push({ role: 'model', text: reply });
+
+        chat.scrollTop = chat.scrollHeight;
+      } catch (err) {
+        pending.classList.remove('pending');
+        const bubble = pending.querySelector('.bubble');
+        bubble.textContent = 'Network error: ' + err;
+      }
+    });
+  </script>
+
+  <!-- Visually hidden utility class for a11y -->
+  <style>
+    .visually-hidden {
+      position: absolute !important;
+      height: 1px; width: 1px;
+      overflow: hidden; clip: rect(1px, 1px, 1px, 1px);
+      white-space: nowrap; clip-path: inset(50%);
+      border: 0; padding: 0; margin: -1px;
+    }
+  </style>
+</body>
+</html>
