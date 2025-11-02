@@ -9,7 +9,7 @@ import google.genai as genai
 # -----------------------------
 # WARNING: Hardcoding the key is not recommended for security! 
 # You should use os.getenv("GEMINI_API_KEY") if possible.
-GEMINI_API_KEY = "AIzaSyDTKpmRey3_tO72WLp6lZ4L9dzOckLpDgs" 
+GEMINI_API_KEY = "" 
 
 if not GEMINI_API_KEY or GEMINI_API_KEY == "YOUR_GEMINI_API_KEY_HERE":
     raise RuntimeError("Put your real Gemini API key in GEMINI_API_KEY.")
