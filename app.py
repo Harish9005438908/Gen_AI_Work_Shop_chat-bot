@@ -10,10 +10,10 @@ from google.genai import types
 # -----------------------------
 # WARNING: Hardcoding the key is not recommended for security! 
 # You should use os.getenv("GEMINI_API_KEY") if possible.
-GEMINI_API_KEY = "AIzaSyDTKpmRey3_tO72WLp6lZ4L9dzOckLpDgs" # <<< REPLACE THIS WITH YOUR REAL KEY
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") # <<< REPLACE THIS WITH YOUR REAL KEY
 
-# if not GEMINI_API_KEY or GEMINI_API_KEY == "AIzaSyDTKpmRey3_tO72WLp6lZ4L9dzOckLpDgs":
-#     raise RuntimeError("Put your real Gemini API key in GEMINI_API_KEY.")
+if not GEMINI_API_KEY and os.getenv("PORT"):
+    raise RuntimeError("Put your real Gemini API key in GEMINI_API_KEY.")
 
 # Model (fast & affordable)
 MODEL_NAME = "gemini-2.5-flash-lite"
@@ -140,5 +140,10 @@ def chat():
         return jsonify({"error": f"An unexpected error occurred: {error_message}"}), 500
 
 if __name__ == "__main__":
-    # WARNING: debug=True is for local dev only
-    app.run(host="0.0.0.0", port=8000, debug=True)
+    # Render (or any cloud service) provides the PORT environment variable.
+    # We use os.environ.get("PORT") to dynamically get the assigned port, 
+    # defaulting to 8000 for local testing.
+    port = int(os.environ.get("PORT", 8000))
+    
+    # WARNING: debug=True is generally disabled in production, but keep for local use.
+    app.run(host="0.0.0.0", port=port, debug=True)
