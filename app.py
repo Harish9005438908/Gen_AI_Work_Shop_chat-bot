@@ -1,25 +1,27 @@
-# app.py
 import os
 from flask import Flask, request, jsonify, render_template
 from flask_cors import CORS
-import google.generativeai as genai
+import google.genai as genai
 
 # -----------------------------
-# 1) HARDCODED API KEY
-#    (rotate/change before sharing; don't commit to public repos)
+# 1) API KEY HANDLING
+#    (Replace with your actual key or use os.getenv)
 # -----------------------------
-GEMINI_API_KEY = "Your Api Key"
+# WARNING: Hardcoding the key is not recommended for security! 
+# You should use os.getenv("GEMINI_API_KEY") if possible.
+GEMINI_API_KEY = "AIzaSyDTKpmRey3_tO72WLp6lZ4L9dzOckLpDgs" 
+
 if not GEMINI_API_KEY or GEMINI_API_KEY == "YOUR_GEMINI_API_KEY_HERE":
     raise RuntimeError("Put your real Gemini API key in GEMINI_API_KEY.")
 
 # Model (fast & affordable)
 MODEL_NAME = "gemini-2.5-flash-lite"
 
-genai.configure(api_key=GEMINI_API_KEY)
+# Initialize the client. The key is passed directly to the constructor.
+client = genai.Client(api_key=GEMINI_API_KEY)
 
 # -----------------------------
 # 2) PROMPT PROFILES (behavior presets)
-#    Choose via request JSON: { "mode": "teacher" }
 # -----------------------------
 PROFILES = {
     "default": {
@@ -50,13 +52,14 @@ CORS(app)
 
 @app.get("/")
 def index():
+    # Note: You must have a 'templates/index.html' file for this to work
     return render_template("index.html")
 
 @app.post("/chat")
 def chat():
     data = request.get_json(force=True) or {}
     user_message = (data.get("message") or "").strip()
-    history = data.get("history", [])             # [{role: "user"/"model", text: "..."}]
+    history = data.get("history", [])         # [{role: "user"/"model", text: "..."}]
     mode = (data.get("mode") or "default").lower()
 
     if not user_message:
@@ -75,16 +78,26 @@ def chat():
     contents.append({"role": "user", "parts": [user_message]})
 
     try:
-        model = genai.GenerativeModel(
-            MODEL_NAME,
-            system_instruction=system_instruction,
-            generation_config=generation_config,
+        # Final Correction: Pass system_instruction and generation_config 
+        # inside the 'config' dictionary.
+        resp = client.models.generate_content(
+            model=MODEL_NAME, 
+            contents=contents,
+            config={
+                "system_instruction": system_instruction,     # <--- Nested correctly
+                "generation_config": generation_config,      # <--- Nested correctly
+            }
         )
-        resp = model.generate_content(contents)
+        
         text = resp.text or "(No response text)"
         return jsonify({"reply": text, "mode": mode})
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        # Handle potential API key or other runtime errors
+        error_message = str(e)
+        if "API_KEY_INVALID" in error_message or "API key not valid" in error_message:
+            return jsonify({"error": "Gemini API Key is invalid or rate-limited. Check your key and usage."}), 500
+            
+        return jsonify({"error": f"An unexpected error occurred: {error_message}"}), 500
 
 if __name__ == "__main__":
     # WARNING: debug=True is for local dev only
